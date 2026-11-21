@@ -1,0 +1,6 @@
+{
+  "name": "Terra Atlas",
+  "description": "Interactive 3D Earth telemetry dashboard featuring real-time day/night solar terminator, orbital satellites, geophysical monitoring stations, and planetary data layers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
