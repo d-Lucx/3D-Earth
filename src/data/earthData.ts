@@ -1,7 +1,8 @@
 import * as THREE from 'three';
+import type { EarthquakeEvent } from '../services/seismicTelemetry';
 
 export type StationCategory = 'climate' | 'seismic' | 'oceanic' | 'atmospheric';
-export type DataLayerMode = 'natural' | 'thermal' | 'co2' | 'tectonic';
+export type DataLayerMode = 'natural' | 'precipitation' | 'thermal' | 'co2' | 'tectonic';
 export type CameraPresetId = 'global' | 'americas' | 'emea' | 'apac' | 'polar';
 
 export interface MonitoringStation {
@@ -49,6 +50,25 @@ export interface DataArc {
   toId: string;
   kind: 'telemetry' | 'atmospheric' | 'oceanic';
 }
+
+export interface GlobalLocation {
+  id: string;
+  name: string;
+  region: string;
+  country: string;
+  lat: number;
+  lon: number;
+  elevationM?: number;
+  population?: number;
+  kindLabel: 'City' | 'Landmark' | 'Coordinates';
+  summary?: string;
+}
+
+export type SelectedTarget =
+  | { kind: 'station'; id: string }
+  | { kind: 'satellite'; id: string }
+  | { kind: 'location'; id: string; location: GlobalLocation }
+  | { kind: 'earthquake'; id: string; event: EarthquakeEvent };
 
 export interface CameraPreset {
   id: CameraPresetId;
@@ -146,6 +166,17 @@ export const DATA_MODES: DataModeSpec[] = [
     midLabel: 'Temperate Land',
     maxLabel: 'Polar Ice',
     gradientCss: 'linear-gradient(90deg, #0b2242 0%, #166078 28%, #2e6b3e 55%, #b89c6a 78%, #eef4f8 100%)',
+  },
+  {
+    id: 'precipitation',
+    label: 'Precip & Clouds',
+    shortLabel: 'Precip',
+    description: 'Real-time global cloud cover fraction and active precipitation radar intensity.',
+    unit: 'mm/h',
+    minLabel: 'Clear · 0 mm/h',
+    midLabel: 'Rain · 4 mm/h',
+    maxLabel: 'Storm · 16+ mm/h',
+    gradientCss: 'linear-gradient(90deg, #0b1628 0%, #2b4c74 24%, #06b6d4 46%, #22c55e 64%, #f59e0b 82%, #ef4444 100%)',
   },
   {
     id: 'thermal',
