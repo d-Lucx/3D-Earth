@@ -35,6 +35,8 @@ import {
   type SeismicSnapshot,
 } from '../services/seismicTelemetry';
 import { SparklineChart } from './SparklineChart';
+import { GeologicalScrubber } from './GeologicalScrubber';
+import type { DeepTimeEraId, StoryBeaconAction } from '../data/deepTimeData';
 
 export type DockTab = 'overview' | 'layers' | 'seismic' | 'stations' | 'satellites';
 export type TimelineMode = 'live' | 'historical';
@@ -55,6 +57,14 @@ interface BottomControlDockProps {
   historyPlaying: boolean;
   activeTimestampMs: number;
   focusedLocationWeather: StationWeatherReading | null;
+  tourPlaying: boolean;
+  driftPlaying: boolean;
+  onSelectDeepTimeEra: (eraId: DeepTimeEraId) => void;
+  onToggleTourPlay: () => void;
+  onTriggerDeepTimeAction: (action: StoryBeaconAction) => void;
+  onChangeDriftProgress: (val: number) => void;
+  onToggleDriftPlay: () => void;
+  onChangeRiftMelt: (val: number) => void;
   onSetTimelineMode: (mode: TimelineMode) => void;
   onScrubHistoryOffset: (offsetHours: number) => void;
   onToggleHistoryPlay: () => void;
@@ -98,6 +108,14 @@ export function BottomControlDock({
   historyPlaying,
   activeTimestampMs,
   focusedLocationWeather,
+  tourPlaying,
+  driftPlaying,
+  onSelectDeepTimeEra,
+  onToggleTourPlay,
+  onTriggerDeepTimeAction,
+  onChangeDriftProgress,
+  onToggleDriftPlay,
+  onChangeRiftMelt,
   onSetTimelineMode,
   onScrubHistoryOffset,
   onToggleHistoryPlay,
@@ -223,8 +241,24 @@ export function BottomControlDock({
         aria-label="Earth telemetry and controls"
         className="pointer-events-auto bg-[#0a101d]/96 border border-slate-800 rounded-xl shadow-[0_18px_48px_rgba(0,0,0,0.65)] overflow-hidden"
       >
-        {/* Contextual Selected Target Telemetry Strip */}
-        {selectedStation && (
+        {settings.appMode === 'deep-time' ? (
+          <GeologicalScrubber
+            activeEra={settings.deepTimeEra}
+            tourPlaying={tourPlaying}
+            driftProgress={settings.sandbox.driftProgress}
+            driftPlaying={driftPlaying}
+            riftMeltProgress={settings.sandbox.riftMeltProgress}
+            onSelectEra={onSelectDeepTimeEra}
+            onToggleTourPlay={onToggleTourPlay}
+            onTriggerAction={onTriggerDeepTimeAction}
+            onChangeDriftProgress={onChangeDriftProgress}
+            onToggleDriftPlay={onToggleDriftPlay}
+            onChangeRiftMelt={onChangeRiftMelt}
+          />
+        ) : (
+          <>
+            {/* Contextual Selected Target Telemetry Strip */}
+            {selectedStation && (
           <div className="px-5 py-3.5 bg-[#0e1628] border-b border-slate-800/90 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-slate-400">
@@ -1184,6 +1218,8 @@ export function BottomControlDock({
             </div>
           )}
         </div>
+          </>
+        )}
       </section>
     </div>
   );

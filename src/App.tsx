@@ -4,10 +4,23 @@ import {
   type DockTab,
   type TimelineMode,
 } from './components/BottomControlDock';
+import {
+  DeepTimeDrawer,
+  type FieldCheckFeedback,
+} from './components/DeepTimeDrawer';
 import { TopBar } from './components/TopBar';
 import type { CameraPresetId, SelectedTarget } from './data/earthData';
 import {
+  DEEP_TIME_CHAPTERS,
+  getDeepTimeChapter,
+  type DeepTimeEraId,
+  type DeepTimeSandboxDefaults,
+  type StoryBeacon,
+  type StoryBeaconAction,
+} from './data/deepTimeData';
+import {
   EarthSceneEngine,
+  type AppMode,
   type HoverInfo,
   type MagneticProbeReading,
   type SatelliteLivePos,
@@ -29,7 +42,10 @@ import {
   type SeismicSnapshot,
 } from './services/seismicTelemetry';
 
+const DEFAULT_CHAPTER = DEEP_TIME_CHAPTERS[0];
+
 const INITIAL_SETTINGS: SceneSettings = {
+  appMode: 'telemetry',
   dataMode: 'natural',
   showClouds: true,
   showCityLights: true,
@@ -43,13 +59,55 @@ const INITIAL_SETTINGS: SceneSettings = {
   solarHourUtc: 15.5,
   solarAutoAdvance: false,
   selectedTarget: null,
+  deepTimeEra: DEFAULT_CHAPTER.id,
+  coreCutaway: false,
+  sandbox: { ...DEFAULT_CHAPTER.sandboxDefaults },
+  fieldCheckActive: false,
 };
+
+function computeSphericalFeedback(
+  clickedLat: number,
+  clickedLon: number,
+  targetLat: number,
+  targetLon: number,
+  toleranceDeg: number,
+): FieldCheckFeedback {
+  const toRad = Math.PI / 180;
+  const lat1 = clickedLat * toRad;
+  const lat2 = targetLat * toRad;
+  const dLat = (targetLat - clickedLat) * toRad;
+  const dLon = (targetLon - clickedLon) * toRad;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
+  const distanceDeg = c / toRad;
+
+  let wrappedDLon = targetLon - clickedLon;
+  if (wrappedDLon > 180) wrappedDLon -= 360;
+  if (wrappedDLon < -180) wrappedDLon += 360;
+
+  const ns = Math.abs(targetLat - clickedLat) > 6 ? (targetLat > clickedLat ? 'North' : 'South') : '';
+  const ew = Math.abs(wrappedDLon) > 6 ? (wrappedDLon > 0 ? 'East' : 'West') : '';
+  const directionHint = [ns, ew].filter(Boolean).join('-') || 'Closer';
+
+  return {
+    correct: distanceDeg <= toleranceDeg,
+    distanceDeg,
+    directionHint,
+    clickedLat,
+    clickedLon,
+  };
+}
 
 export default function App() {
   const canvasMountRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<EarthSceneEngine | null>(null);
 
   const [settings, setSettings] = useState<SceneSettings>(INITIAL_SETTINGS);
+  const settingsRef = useRef<SceneSettings>(INITIAL_SETTINGS);
+  settingsRef.current = settings;
+
   const [activePreset, setActivePreset] = useState<CameraPresetId | null>('global');
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<DockTab>('overview');
@@ -71,6 +129,16 @@ export default function App() {
   const [historyPlaying, setHistoryPlaying] = useState<boolean>(false);
   const [focusedLocationWeather, setFocusedLocationWeather] =
     useState<StationWeatherReading | null>(null);
+
+  // Deep Time ("Chrono-Atlas") UI state
+  const [deepTimeDrawerOpen, setDeepTimeDrawerOpen] = useState(true);
+  const [activeBeaconId, setActiveBeaconId] = useState<string | null>(null);
+  const [tourPlaying, setTourPlaying] = useState(false);
+  const [driftPlaying, setDriftPlaying] = useState(false);
+  const [fieldCheckFeedback, setFieldCheckFeedback] = useState<FieldCheckFeedback | null>(
+    null,
+  );
+
   const weatherAbortRef = useRef<AbortController | null>(null);
   const seismicAbortRef = useRef<AbortController | null>(null);
 
@@ -105,6 +173,46 @@ export default function App() {
         setSettings((prev) => ({ ...prev, selectedTarget: target }));
         if (target) {
           setDockCollapsed(false);
+        }
+      },
+      onSelectBeacon: (beacon: StoryBeacon) => {
+        setActiveBeaconId(beacon.id);
+        setDeepTimeDrawerOpen(true);
+        if (beacon.action === 'volcanic-rift-melt') {
+          setSettings((prev) => ({
+            ...prev,
+            sandbox: { ...prev.sandbox, riftMeltProgress: 0.82 },
+          }));
+        } else if (beacon.action === 'himalayan-uplift') {
+          setDriftPlaying(true);
+        }
+      },
+      onGlobeClickCoords: (coords) => {
+        const cur = settingsRef.current;
+        if (cur.appMode !== 'deep-time' || !cur.fieldCheckActive) return;
+        const chapter = getDeepTimeChapter(cur.deepTimeEra);
+        const fb = computeSphericalFeedback(
+          coords.lat,
+          coords.lon,
+          chapter.fieldCheck.targetLat,
+          chapter.fieldCheck.targetLon,
+          chapter.fieldCheck.toleranceDeg,
+        );
+        setFieldCheckFeedback(fb);
+        if (fb.correct) {
+          setSettings((prev) => ({ ...prev, fieldCheckActive: false }));
+          engineRef.current?.triggerDeepTimeAction(chapter.defaultAction);
+          engineRef.current?.flyToCoordinates(
+            chapter.fieldCheck.targetLat,
+            chapter.fieldCheck.targetLon,
+            2.38,
+          );
+          if (chapter.id === 'snowball') {
+            setSettings((prev) => ({
+              ...prev,
+              sandbox: { ...prev.sandbox, riftMeltProgress: 0.85 },
+            }));
+          }
         }
       },
       onHoverTarget: (info) => {
@@ -161,6 +269,50 @@ export default function App() {
     }, 850);
     return () => window.clearInterval(id);
   }, [historyPlaying]);
+
+  // Deep Time Chronological Tour playback loop
+  useEffect(() => {
+    if (!tourPlaying || settings.appMode !== 'deep-time') return;
+    const id = window.setInterval(() => {
+      setSettings((prev) => {
+        const idx = DEEP_TIME_CHAPTERS.findIndex((c) => c.id === prev.deepTimeEra);
+        const nextChapter = DEEP_TIME_CHAPTERS[(idx + 1) % DEEP_TIME_CHAPTERS.length];
+        return {
+          ...prev,
+          deepTimeEra: nextChapter.id,
+          sandbox: { ...nextChapter.sandboxDefaults },
+          fieldCheckActive: false,
+        };
+      });
+      setFieldCheckFeedback(null);
+      setActiveBeaconId(null);
+    }, 9500);
+    return () => window.clearInterval(id);
+  }, [tourPlaying, settings.appMode]);
+
+  // Pangaea Continental Drift animation loop
+  useEffect(() => {
+    if (!driftPlaying || settings.appMode !== 'deep-time' || settings.deepTimeEra !== 'pangaea') {
+      return;
+    }
+    const id = window.setInterval(() => {
+      setSettings((prev) => {
+        const nextVal = prev.sandbox.driftProgress + 0.015;
+        if (nextVal >= 1.0) {
+          setDriftPlaying(false);
+          return {
+            ...prev,
+            sandbox: { ...prev.sandbox, driftProgress: 1.0 },
+          };
+        }
+        return {
+          ...prev,
+          sandbox: { ...prev.sandbox, driftProgress: nextVal },
+        };
+      });
+    }, 55);
+    return () => window.clearInterval(id);
+  }, [driftPlaying, settings.appMode, settings.deepTimeEra]);
 
   // Align Earth's solar UTC terminator with scrubbed historical timestamps
   useEffect(() => {
@@ -250,7 +402,7 @@ export default function App() {
     return () => controller.abort();
   }, [settings.selectedTarget]);
 
-  // Keyboard shortcuts: H toggles Zen mode, Escape clears selected target
+  // Keyboard shortcuts: H toggles Zen mode, Escape clears selected target / armed quiz
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -265,9 +417,11 @@ export default function App() {
       if (event.key === 'h' || event.key === 'H') {
         setDockCollapsed((prev) => !prev);
       } else if (event.key === 'Escape') {
-        setSettings((prev) =>
-          prev.selectedTarget ? { ...prev, selectedTarget: null } : prev,
-        );
+        setSettings((prev) => ({
+          ...prev,
+          selectedTarget: null,
+          fieldCheckActive: false,
+        }));
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -278,6 +432,96 @@ export default function App() {
     setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
 
+  const handleChangeAppMode = useCallback((mode: AppMode) => {
+    setTourPlaying(false);
+    setDriftPlaying(false);
+    setFieldCheckFeedback(null);
+    setActiveBeaconId(null);
+    if (mode === 'deep-time') {
+      setHistoryPlaying(false);
+      setDeepTimeDrawerOpen(true);
+      setDockCollapsed(false);
+      setSettings((prev) => {
+        const chapter = getDeepTimeChapter(prev.deepTimeEra);
+        return {
+          ...prev,
+          appMode: 'deep-time',
+          selectedTarget: null,
+          fieldCheckActive: false,
+          sandbox: { ...chapter.sandboxDefaults },
+        };
+      });
+    } else {
+      setSettings((prev) => ({
+        ...prev,
+        appMode: 'telemetry',
+        coreCutaway: false,
+        fieldCheckActive: false,
+      }));
+    }
+  }, []);
+
+  const handleSelectDeepTimeEra = useCallback((eraId: DeepTimeEraId) => {
+    const chapter = getDeepTimeChapter(eraId);
+    setDriftPlaying(false);
+    setActiveBeaconId(null);
+    setFieldCheckFeedback(null);
+    setSettings((prev) => ({
+      ...prev,
+      deepTimeEra: eraId,
+      sandbox: { ...chapter.sandboxDefaults },
+      fieldCheckActive: false,
+    }));
+  }, []);
+
+  const handleTriggerDeepTimeAction = useCallback((action: StoryBeaconAction) => {
+    engineRef.current?.triggerDeepTimeAction(action);
+    if (action === 'volcanic-rift-melt') {
+      setSettings((prev) => ({
+        ...prev,
+        sandbox: {
+          ...prev.sandbox,
+          riftMeltProgress: prev.sandbox.riftMeltProgress > 0.75 ? 0.0 : 0.88,
+        },
+      }));
+    } else if (action === 'himalayan-uplift') {
+      setSettings((prev) => ({
+        ...prev,
+        sandbox: {
+          ...prev.sandbox,
+          driftProgress: prev.sandbox.driftProgress > 0.92 ? 0.0 : prev.sandbox.driftProgress,
+        },
+      }));
+      setDriftPlaying(true);
+    } else if (action === 'chicxulub-impact') {
+      engineRef.current?.flyToCoordinates(21.4, -89.5, 2.45);
+    }
+  }, []);
+
+  const handleSelectBeacon = useCallback((beacon: StoryBeacon) => {
+    setActiveBeaconId(beacon.id);
+    engineRef.current?.flyToCoordinates(beacon.lat, beacon.lon, 2.38);
+    handleTriggerDeepTimeAction(beacon.action);
+  }, [handleTriggerDeepTimeAction]);
+
+  const handleUpdateSandbox = useCallback((patch: Partial<DeepTimeSandboxDefaults>) => {
+    setSettings((prev) => ({
+      ...prev,
+      sandbox: { ...prev.sandbox, ...patch },
+    }));
+  }, []);
+
+  const handleResetSandbox = useCallback(() => {
+    setDriftPlaying(false);
+    setSettings((prev) => {
+      const chapter = getDeepTimeChapter(prev.deepTimeEra);
+      return {
+        ...prev,
+        sandbox: { ...chapter.sandboxDefaults },
+      };
+    });
+  }, []);
+
   const handleSelectPreset = useCallback((presetId: CameraPresetId) => {
     setActivePreset(presetId);
     setSettings((prev) => ({ ...prev, selectedTarget: null }));
@@ -286,12 +530,32 @@ export default function App() {
 
   const handleResetView = useCallback(() => {
     setActivePreset('global');
-    setSettings(INITIAL_SETTINGS);
+    setTourPlaying(false);
+    setDriftPlaying(false);
+    setFieldCheckFeedback(null);
+    setActiveBeaconId(null);
     setTimelineMode('live');
     setHistoryOffsetHours(0);
     setHistoryPlaying(false);
     setDockCollapsed(false);
-    engineRef.current?.flyToPreset('global');
+    setSettings((prev) => {
+      if (prev.appMode === 'deep-time') {
+        const chapter = getDeepTimeChapter(prev.deepTimeEra);
+        engineRef.current?.flyToCoordinates(
+          chapter.cameraFocus.lat,
+          chapter.cameraFocus.lon,
+          chapter.cameraFocus.distance,
+        );
+        return {
+          ...prev,
+          coreCutaway: false,
+          fieldCheckActive: false,
+          sandbox: { ...chapter.sandboxDefaults },
+        };
+      }
+      engineRef.current?.flyToPreset('global');
+      return INITIAL_SETTINGS;
+    });
   }, []);
 
   const handleSetTimelineMode = useCallback((mode: TimelineMode) => {
@@ -341,6 +605,7 @@ export default function App() {
     setActivePreset(null);
     setSettings((prev) => ({
       ...prev,
+      appMode: 'telemetry',
       showStations: true,
       selectedTarget: { kind: 'station', id: stationId },
     }));
@@ -351,6 +616,7 @@ export default function App() {
     setActivePreset(null);
     setSettings((prev) => ({
       ...prev,
+      appMode: 'telemetry',
       showSatellites: true,
       selectedTarget: { kind: 'satellite', id: satId },
     }));
@@ -362,6 +628,7 @@ export default function App() {
     setDockCollapsed(false);
     setSettings((prev) => ({
       ...prev,
+      appMode: 'telemetry',
       showEarthquakes: true,
       selectedTarget: { kind: 'earthquake', id: event.id, event },
     }));
@@ -374,6 +641,7 @@ export default function App() {
     if (target.kind === 'station') {
       setSettings((prev) => ({
         ...prev,
+        appMode: 'telemetry',
         showStations: true,
         selectedTarget: target,
       }));
@@ -381,6 +649,7 @@ export default function App() {
     } else if (target.kind === 'satellite') {
       setSettings((prev) => ({
         ...prev,
+        appMode: 'telemetry',
         showSatellites: true,
         selectedTarget: target,
       }));
@@ -388,6 +657,7 @@ export default function App() {
     } else if (target.kind === 'earthquake') {
       setSettings((prev) => ({
         ...prev,
+        appMode: 'telemetry',
         showEarthquakes: true,
         selectedTarget: target,
       }));
@@ -395,6 +665,7 @@ export default function App() {
     } else {
       setSettings((prev) => ({
         ...prev,
+        appMode: 'telemetry',
         selectedTarget: target,
       }));
       engineRef.current?.flyToCoordinates(target.location.lat, target.location.lon, 2.12);
@@ -406,7 +677,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-[#060911] text-slate-100 select-none">
+    <div className="relative w-full h-screen overflow-hidden bg-[#04070f] text-slate-100 select-none">
       {/* Isolated full-viewport 3D WebGL mount container */}
       <div
         ref={canvasMountRef}
@@ -416,7 +687,7 @@ export default function App() {
 
       {/* Graceful fallback if WebGL2 cannot be initialized */}
       {webglUnavailable && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center p-6 bg-[#060911]">
+        <div className="absolute inset-0 z-10 flex items-center justify-center p-6 bg-[#04070f]">
           <div className="max-w-md w-full p-6 rounded-xl bg-[#0a101d] border border-slate-800 text-center">
             <h1 className="text-lg font-semibold text-slate-100">
               3D WebGL Context Unavailable
@@ -429,13 +700,41 @@ export default function App() {
         </div>
       )}
 
-      {/* Minimal 3-Zone Top Bar with Global Location Search */}
+      {/* Minimal 3-Zone Top Bar with Telemetry | Deep Time Mode Switch & Global Search */}
       <TopBar
+        appMode={settings.appMode}
+        activeDeepTimeEra={settings.deepTimeEra}
         activePreset={activePreset}
+        onChangeAppMode={handleChangeAppMode}
         onSelectPreset={handleSelectPreset}
         onSelectSearchTarget={handleSelectSearchTarget}
         onResetView={handleResetView}
       />
+
+      {/* Collapsible Deep Time ("Chrono-Atlas") Field Guide Drawer */}
+      {settings.appMode === 'deep-time' && !webglUnavailable && (
+        <DeepTimeDrawer
+          open={deepTimeDrawerOpen}
+          activeEra={settings.deepTimeEra}
+          activeBeaconId={activeBeaconId}
+          coreCutaway={settings.coreCutaway}
+          sandbox={settings.sandbox}
+          fieldCheckActive={settings.fieldCheckActive}
+          fieldCheckFeedback={fieldCheckFeedback}
+          onToggleOpen={() => setDeepTimeDrawerOpen((prev) => !prev)}
+          onSelectEra={handleSelectDeepTimeEra}
+          onToggleCoreCutaway={() =>
+            setSettings((prev) => ({ ...prev, coreCutaway: !prev.coreCutaway }))
+          }
+          onSelectBeacon={handleSelectBeacon}
+          onUpdateSandbox={handleUpdateSandbox}
+          onResetSandbox={handleResetSandbox}
+          onToggleFieldCheck={() => {
+            setFieldCheckFeedback(null);
+            setSettings((prev) => ({ ...prev, fieldCheckActive: !prev.fieldCheckActive }));
+          }}
+        />
+      )}
 
       {/* Lightweight non-blocking 3D hover tooltip */}
       {hoverInfo && !webglUnavailable && (
@@ -448,13 +747,18 @@ export default function App() {
         >
           <div
             className="text-[12px] font-semibold truncate"
-            style={{ color: hoverInfo.kind === 'earthquake' ? hoverInfo.accentColor : '#f1f5f9' }}
+            style={{
+              color:
+                hoverInfo.kind === 'earthquake' || hoverInfo.kind === 'beacon'
+                  ? hoverInfo.accentColor
+                  : '#f1f5f9',
+            }}
           >
             {hoverInfo.label}
           </div>
           <div
             className={`text-[11px] truncate mt-0.5 ${
-              hoverInfo.kind === 'earthquake'
+              hoverInfo.kind === 'earthquake' || hoverInfo.kind === 'beacon'
                 ? 'text-slate-200 font-medium'
                 : 'font-mono tabular-nums text-cyan-300'
             }`}
@@ -469,7 +773,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Unified Collapsible Bottom Control Dock */}
+      {/* Unified Collapsible Bottom Control Dock (switches cleanly to GeologicalScrubber in Deep Time) */}
       {!webglUnavailable && (
         <BottomControlDock
           settings={settings}
@@ -487,6 +791,24 @@ export default function App() {
           historyPlaying={historyPlaying}
           activeTimestampMs={activeTimestampMs}
           focusedLocationWeather={focusedLocationWeather}
+          tourPlaying={tourPlaying}
+          driftPlaying={driftPlaying}
+          onSelectDeepTimeEra={handleSelectDeepTimeEra}
+          onToggleTourPlay={() => setTourPlaying((prev) => !prev)}
+          onTriggerDeepTimeAction={handleTriggerDeepTimeAction}
+          onChangeDriftProgress={(val) => {
+            setDriftPlaying(false);
+            handleUpdateSandbox({ driftProgress: val });
+          }}
+          onToggleDriftPlay={() => {
+            setSettings((prev) =>
+              prev.sandbox.driftProgress >= 0.99
+                ? { ...prev, sandbox: { ...prev.sandbox, driftProgress: 0 } }
+                : prev,
+            );
+            setDriftPlaying((prev) => !prev);
+          }}
+          onChangeRiftMelt={(val) => handleUpdateSandbox({ riftMeltProgress: val })}
           onSetTimelineMode={handleSetTimelineMode}
           onScrubHistoryOffset={handleScrubHistoryOffset}
           onToggleHistoryPlay={handleToggleHistoryPlay}

@@ -12,15 +12,24 @@ import {
   type SearchResultItem,
 } from '../services/locationSearch';
 
+import { getDeepTimeChapter, type DeepTimeEraId } from '../data/deepTimeData';
+import type { AppMode } from '../three/EarthSceneEngine';
+
 interface TopBarProps {
+  appMode: AppMode;
+  activeDeepTimeEra: DeepTimeEraId;
   activePreset: CameraPresetId | null;
+  onChangeAppMode: (mode: AppMode) => void;
   onSelectPreset: (presetId: CameraPresetId) => void;
   onSelectSearchTarget: (target: SelectedTarget) => void;
   onResetView: () => void;
 }
 
 export function TopBar({
+  appMode,
+  activeDeepTimeEra,
   activePreset,
+  onChangeAppMode,
   onSelectPreset,
   onSelectSearchTarget,
   onResetView,
@@ -159,40 +168,92 @@ export function TopBar({
     }
   };
 
-  return (
-    <header className="fixed top-0 left-0 right-0 z-20 flex items-center justify-between gap-6 h-14 px-6 bg-[#070b14]/92 border-b border-slate-800/80">
-      {/* Zone 1: Single-element brand wordmark */}
-      <span className="text-[17px] font-semibold tracking-tight text-slate-100 whitespace-nowrap shrink-0 select-none">
-        Terra Atlas
-      </span>
+  const activeChapter = getDeepTimeChapter(activeDeepTimeEra);
 
-      {/* Zone 2: Concise single-line regional navigation links */}
-      <nav
-        aria-label="Hemisphere viewpoints"
-        className="hidden lg:flex items-center gap-6 text-[13px] font-medium"
-      >
-        {CAMERA_PRESETS.map((preset) => {
-          const isActive = activePreset === preset.id;
-          return (
-            <button
-              key={preset.id}
-              type="button"
-              onClick={() => onSelectPreset(preset.id)}
-              className={`relative py-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 rounded-sm ${
-                isActive ? 'text-cyan-300' : 'text-slate-400 hover:text-slate-100'
-              }`}
-            >
-              {preset.label}
-              <span
-                aria-hidden="true"
-                className={`absolute left-0 right-0 -bottom-0.5 h-[1.5px] bg-cyan-400 transition-opacity duration-150 ${
-                  isActive ? 'opacity-100' : 'opacity-0'
+  return (
+    <header className="fixed top-0 left-0 right-0 z-20 flex items-center justify-between gap-4 h-14 px-5 bg-[#070b14]/94 border-b border-slate-800/80">
+      {/* Zone 1: Brand wordmark + Telemetry | Deep Time mode switch */}
+      <div className="flex items-center gap-4 shrink-0">
+        <span className="text-[17px] font-semibold tracking-tight text-slate-100 whitespace-nowrap shrink-0 select-none">
+          Terra Atlas
+        </span>
+
+        <div
+          role="group"
+          aria-label="Atlas exploration mode"
+          className="flex items-center gap-0.5 p-0.5 bg-[#0b1220] rounded-lg border border-slate-800 shrink-0"
+        >
+          <button
+            type="button"
+            aria-pressed={appMode === 'telemetry'}
+            onClick={() => onChangeAppMode('telemetry')}
+            className={`px-3 py-1 text-[12px] font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
+              appMode === 'telemetry'
+                ? 'bg-slate-800 text-cyan-300'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Telemetry
+          </button>
+          <button
+            type="button"
+            aria-pressed={appMode === 'deep-time'}
+            onClick={() => onChangeAppMode('deep-time')}
+            className={`px-3 py-1 text-[12px] font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+              appMode === 'deep-time'
+                ? 'bg-amber-500/20 text-amber-200'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Deep Time
+          </button>
+        </div>
+      </div>
+
+      {/* Zone 2: Hemisphere presets (Telemetry) OR active Geological Chapter summary (Deep Time) */}
+      {appMode === 'telemetry' ? (
+        <nav
+          aria-label="Hemisphere viewpoints"
+          className="hidden xl:flex items-center gap-5 text-[13px] font-medium"
+        >
+          {CAMERA_PRESETS.map((preset) => {
+            const isActive = activePreset === preset.id;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => onSelectPreset(preset.id)}
+                className={`relative py-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 rounded-sm ${
+                  isActive ? 'text-cyan-300' : 'text-slate-400 hover:text-slate-100'
                 }`}
-              />
-            </button>
-          );
-        })}
-      </nav>
+              >
+                {preset.label}
+                <span
+                  aria-hidden="true"
+                  className={`absolute left-0 right-0 -bottom-0.5 h-[1.5px] bg-cyan-400 transition-opacity duration-150 ${
+                    isActive ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
+              </button>
+            );
+          })}
+        </nav>
+      ) : (
+        <div className="hidden lg:flex items-center gap-2.5 text-[12px] min-w-0">
+          <span
+            className="font-mono tabular-nums font-semibold whitespace-nowrap shrink-0"
+            style={{ color: activeChapter.accentColor }}
+          >
+            {activeChapter.timeframe}
+          </span>
+          <span aria-hidden="true" className="text-slate-700">
+            ·
+          </span>
+          <span className="text-slate-200 font-medium truncate">
+            {activeChapter.title}
+          </span>
+        </div>
+      )}
 
       {/* Zone 3: Global Location Search + Reset View Action */}
       <div className="flex items-center gap-3 shrink-0">
